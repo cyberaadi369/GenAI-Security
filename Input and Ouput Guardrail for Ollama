@@ -1,0 +1,72 @@
+import ollama
+import re
+import datetime
+
+# 1. Configuration
+TARGET_MODEL = "secure-bot"
+SECRET_KEY = "GOLDEN-GOOSE-2026"
+
+# REVISED REGEX: Catches the full key OR the first 5 characters
+# This prevents the "partial leak" you experienced.
+KEY_PATTERN = r"(GOLDEN-GOOSE-2026|GOLDE|GOLDEN)"
+
+def security_log(event_type, details):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] [{event_type}] {details}"
+    with open("security_audit.log", "a") as f:
+        f.write(log_entry + "\n")
+    print(log_entry)
+
+def input_guardrail(prompt):
+    """Hardened Input Check for Smuggling Intent."""
+    p_lower = prompt.lower()
+    
+    # Smuggling-specific keywords
+    smuggling_indicators = [
+        "first 5", "characters", "part of", "segment", 
+        "fragment", "split", "spell it", "character by character"
+    ]
+    
+    if any(indicator in p_lower for indicator in smuggling_indicators):
+        security_log("SMUGGLING_DETECTED", f"Blocked attempt to fragment data: '{prompt}'")
+        return False, "❌ Security Policy: Requests for partial data or character fragments are prohibited."
+    
+    # General bypass keywords
+    if any(word in p_lower for word in ["ignore", "bypass", "reveal"]):
+        security_log("BYPASS_ATTEMPT", "Blocked rule override attempt.")
+        return False, "❌ Security Policy: You cannot override system safety instructions."
+        
+    return True, prompt
+
+def output_guardrail(response):
+    """Hardened Output Check for Partial Leaks."""
+    # If the response contains even a PIECE of the key, block it.
+    if re.search(KEY_PATTERN, response, re.IGNORECASE):
+        security_log("DATA_LEAK_PREVENTED", "Model attempted to leak a partial or full key.")
+        return "⚠️ [REDACTED]: The response contained sensitive credential fragments."
+    return response
+
+def secure_chat():
+    print(f"--- Aadi's Hardened Interface (Target: {SECRET_KEY}) ---")
+    while True:
+        user_input = input("\nUser > ")
+        if user_input.lower() in ['exit', 'quit']: break
+
+        is_safe, processed_input = input_guardrail(user_input)
+        if not is_safe:
+            print(f"Assistant > {processed_input}")
+            continue
+
+        try:
+            res = ollama.chat(model=TARGET_MODEL, messages=[{'role': 'user', 'content': processed_input}])
+            raw_answer = res['message']['content']
+            
+            # Post-check: Catch anything that slipped through
+            final_answer = output_guardrail(raw_answer)
+            print(f"Assistant > {final_answer}")
+            
+        except Exception as e:
+            print(f"Error: {e}")
+
+if __name__ == "__main__":
+    secure_chat()
